@@ -113,7 +113,7 @@ def eval_model(args):
 
     print(images_tensor.shape)
     with torch.inference_mode():
-        output_ids = model.generate(
+        generation_output = model.generate(
             input_ids,
             images=[
                 images_tensor,
@@ -125,7 +125,12 @@ def eval_model(args):
             max_new_tokens=args.max_new_tokens,
             use_cache=True,
             stopping_criteria=[stopping_criteria],
+            output_hidden_states=True,
+            return_dict_in_generate=True,
         )
+        output_ids = generation_output.sequences
+        question_hidden_states = generation_output.hidden_states[0]
+        final_hidden_states = generation_output.hidden_states[-1]
 
     outputs = tokenizer.batch_decode(output_ids, skip_special_tokens=True)[0]
     outputs = outputs.strip()
@@ -137,13 +142,14 @@ def eval_model(args):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument("--model-path", type=str, default="Efficient-Large-Model/VILA-2.7b")
+    parser.add_argument("--model-path", type=str, default="Efficient-Large-Model/VILA1.5-3b")
     parser.add_argument("--model-base", type=str, default=None)
     parser.add_argument("--image-file", type=str, default=None)
-    parser.add_argument("--video-file", type=str, default=None)
-    parser.add_argument("--num-video-frames", type=int, default=6)
-    parser.add_argument("--query", type=str, required=True)
-    parser.add_argument("--conv-mode", type=str, default=None)
+    parser.add_argument("--video-file", type=str, default='/home/tomjur/VILA/demo.mp4')
+    parser.add_argument("--num-video-frames", type=int, default=8)
+    parser.add_argument("--query", type=str, default="<video>\n "
+                                                     "Specify the object being picked and placed (if any), include their colors and shapes.")
+    parser.add_argument("--conv-mode", type=str, default='vicuna_v1')
     parser.add_argument("--sep", type=str, default=",")
     parser.add_argument("--temperature", type=float, default=0.2)
     parser.add_argument("--top_p", type=float, default=None)
