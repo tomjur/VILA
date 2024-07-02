@@ -41,6 +41,7 @@ def load_images(image_files):
         out.append(image)
     return out
 
+
 def eval_model(args):
     # Model
     disable_torch_init()
@@ -100,9 +101,6 @@ def eval_model(args):
     conv.append_message(conv.roles[0], qs)
     conv.append_message(conv.roles[1], None)
     prompt = conv.get_prompt()
-
-    
-        
         
     images_tensor = process_images(images, image_processor, model.config).to(model.device, dtype=torch.float16)
     input_ids = tokenizer_image_token(prompt, tokenizer, IMAGE_TOKEN_INDEX, return_tensors="pt").unsqueeze(0).cuda()
@@ -110,6 +108,8 @@ def eval_model(args):
     stop_str = conv.sep if conv.sep_style != SeparatorStyle.TWO else conv.sep2
     keywords = [stop_str]
     stopping_criteria = KeywordsStoppingCriteria(keywords, tokenizer, input_ids)
+
+    hidden_layer_to_use_as_embedding = -1
 
     print(images_tensor.shape)
     with torch.inference_mode():
@@ -129,8 +129,8 @@ def eval_model(args):
             return_dict_in_generate=True,
         )
         output_ids = generation_output.sequences
-        question_hidden_states = generation_output.hidden_states[0]
-        final_hidden_states = generation_output.hidden_states[-1]
+        question_hidden_states = generation_output.hidden_states[0][hidden_layer_to_use_as_embedding][:, -1, :]
+        final_hidden_states = generation_output.hidden_states[-1][hidden_layer_to_use_as_embedding][:, -1, :]
 
     outputs = tokenizer.batch_decode(output_ids, skip_special_tokens=True)[0]
     outputs = outputs.strip()
