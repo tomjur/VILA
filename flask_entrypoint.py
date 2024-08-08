@@ -185,7 +185,7 @@ def call_predict_representation_base():
     return jsonify(result.tolist())
 
 
-@app.route('/predict_completion', methods=['POST'])
+@app.route('/predict_representation_after_completion', methods=['POST'])
 def call_predict_representation_after_completion():
     data = request.get_json()
     query_parts = data.get('query_parts')
