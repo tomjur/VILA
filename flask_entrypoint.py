@@ -69,7 +69,7 @@ class ModelWrapper:
         print('result:', result.tolist())
         return result
 
-    def predict_representation_after_completion(self, query_parts: List[Tuple[str, str]], temperature=0.2, top_p=None, num_beams=1, max_new_tokens=512) -> torch.Tensor:
+    def predict_representation_after_completion(self, query_parts: List[Tuple[str, str]], temperature=0.2, top_p=None, num_beams=1, max_new_tokens=512) -> np.array:
         print('predict_representation_after_completion called')
         vila_inputs, query = self._compose_model_inputs(query_parts)
         print('query:', query)
@@ -194,7 +194,7 @@ def call_predict_representation_after_completion():
     num_beams = data.get('num_beams')
     max_new_tokens = data.get('max_new_tokens')
     result = model_wrapper.predict_representation_after_completion(query_parts, temperature, top_p, num_beams, max_new_tokens)
-    return jsonify(result)
+    return jsonify(result.tolist())
 
 
 if __name__ == '__main__':
