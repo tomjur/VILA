@@ -1,7 +1,7 @@
 from dataclasses import dataclass
 
 import torch
-from flask import Flask, request, jsonify
+from flask import Flask, request, jsonify, send_file
 import numpy as np
 import base64
 import io
@@ -49,70 +49,66 @@ class ModelWrapper:
         self.conv_mode = conv_mode
 
         # warm up the model by doing a single query
-        self.predict_completion([('text', 'Hello')])
+        self.predict_completion([[('text', 'Hello')]])
         print("done warming up model")
 
     def predict_completion(self, query_parts: List[Tuple[str, str]], temperature=0.2, top_p=None, num_beams=1, max_new_tokens=512) -> str:
         print('predict_completion called')
-        vila_inputs, query = self._compose_model_inputs(query_parts)
-        print('query:', query)
-        completion, _, _ = self._run_vila(vila_inputs, temperature, top_p, num_beams, max_new_tokens)
-        print('completion:', completion)
-        return completion
+        result = []
+        for vila_inputs in self._compose_model_inputs(query_parts):
+            completion, _, _ = self._run_vila(vila_inputs, temperature, top_p, num_beams, max_new_tokens)
+            result.append(completion)
+        return result
 
     def predict_representation_base(self, query_parts: List[Tuple[str, str]]) -> np.array:
         print('predict_representation_base called')
-        vila_inputs, query = self._compose_model_inputs(query_parts)
-        print('query:', query)
-        _, base_hidden_states, _ = self._run_vila(vila_inputs, 0, None, 1, 1)
-        result = base_hidden_states.cpu().numpy()
-        print('result:', result.tolist())
+        result = []
+        for vila_inputs in self._compose_model_inputs(query_parts):
+            _, base_hidden_states, _ = self._run_vila(vila_inputs, 0, None, 1, 1)
+            result.append(base_hidden_states)
+        result = torch.stack(result)
         return result
 
     def predict_representation_after_completion(self, query_parts: List[Tuple[str, str]], temperature=0.2, top_p=None, num_beams=1, max_new_tokens=512) -> np.array:
         print('predict_representation_after_completion called')
-        vila_inputs, query = self._compose_model_inputs(query_parts)
-        print('query:', query)
-        _, _, post_generation_hidden_states = self._run_vila(vila_inputs, temperature, top_p, num_beams, max_new_tokens)
-        result = post_generation_hidden_states.cpu().numpy()
-        print('result:', result.tolist())
+        result = []
+        for vila_inputs in self._compose_model_inputs(query_parts):
+            _, _, post_generation_hidden_states = self._run_vila(vila_inputs, temperature, top_p, num_beams, max_new_tokens)
+            result.append(post_generation_hidden_states.cpu().numpy())
+        result = torch.stack(result)
         return result
 
-    def _compose_model_inputs(self, query_parts: List[Tuple[str, str]]) -> Tuple[VilaInputs, str]:
-        query = ""
-        images = []
-        for part_type, part in query_parts:
-            if part_type == 'text':
-                query += f" {part}"
-            elif part_type == 'image':
-                images.append(self._image_tensor_from_part(part))
-                query += f" {DEFAULT_IMAGE_TOKEN}"
-
-        conv = conv_templates[self.conv_mode].copy()
-        conv.append_message(conv.roles[0], query)
-        conv.append_message(conv.roles[1], None)
-        prompt = conv.get_prompt()
-
-        images_tensor = self._process_images(images)
-        input_ids = tokenizer_image_token(prompt, self.tokenizer, IMAGE_TOKEN_INDEX, return_tensors="pt").unsqueeze(0).cuda()
-
-        stop_str = conv.sep if conv.sep_style != SeparatorStyle.TWO else conv.sep2
+    def _compose_model_inputs(self, query_parts: List[Tuple[str, str]]) -> list[VilaInputs]:
+        conv_template = conv_templates[self.conv_mode]
+        stop_str = conv_template.sep if conv_template.sep_style != SeparatorStyle.TWO else conv_template.sep2
         keywords = [stop_str]
-        stopping_criteria = KeywordsStoppingCriteria(keywords, self.tokenizer, input_ids)
 
-        return VilaInputs(input_ids, images_tensor, stop_str, stopping_criteria), query
+        query = ["" for _ in range(len(query_parts))]
+        images_tensor = []
+        input_ids = []
+        stopping_criteria = []
+        for env_id in range(len(query_parts)):
+            images = []
+            for part_type, part in query_parts[env_id]:
+                if part_type == 'text':
+                    query[env_id] += f" {part}"
+                elif part_type == 'image':
+                    query[env_id] += f" {DEFAULT_IMAGE_TOKEN}"
+                    images.append(part)
 
-    def _image_tensor_from_part(self, base64_string: str) -> torch.Tensor:
-        base64_bytes = base64_string.encode('utf-8')
-        bytes_data = base64.b64decode(base64_bytes)
+            images_tensor.append(self._process_images(images))
+            conv = conv_template.copy()
+            conv.append_message(conv.roles[0], query[env_id])
+            conv.append_message(conv.roles[1], None)
+            prompt = conv.get_prompt()
 
-        buffer = io.BytesIO(bytes_data)
-        numpy_array = np.load(buffer)
+            input_ids.append(tokenizer_image_token(prompt, self.tokenizer, IMAGE_TOKEN_INDEX,
+                                                   return_tensors="pt").unsqueeze(0).cuda())
 
-        tensor = torch.from_numpy(numpy_array)
-        tensor = tensor.to(self.device)
-        tensor = tensor.type(torch.uint8)
-        return tensor
+            stopping_criteria.append(KeywordsStoppingCriteria(keywords, self.tokenizer, input_ids[env_id]))
+
+        return [VilaInputs(_input_ids, _images_tensor, stop_str, _stopping_criteria)
+                for _input_ids, _images_tensor, _stopping_criteria, _query in zip(input_ids, images_tensor, stopping_criteria, query)]
 
     @staticmethod
     def _process_images(images: List[torch.Tensor]) -> Optional[torch.Tensor]:
@@ -165,34 +161,64 @@ class ModelWrapper:
 model_wrapper = ModelWrapper()
 
 
+def _image_tensor_from_file(file) -> torch.Tensor:
+    buffer = io.BytesIO(file.read())
+    tensor = torch.load(buffer)
+    return tensor.to('cuda' if torch.cuda.is_available() else 'cpu')
+
+
 @app.route('/predict_completion', methods=['POST'])
 def call_predict_completion():
-    data = request.get_json()
-    query_parts = data.get('query_parts')
-    temperature = data.get('temperature')
-    top_p = data.get('top_p')
-    num_beams = data.get('num_beams')
-    max_new_tokens = data.get('max_new_tokens')
+    query_parts = []
+    query_text = request.form['text'] if 'text' in request.form else None
+    query_parts.append(('text', query_text))
+    temperature = float(request.form['temperature']) if 'temperature' in request.form else None
+    top_p = float(request.form['top_p']) if 'top_p' in request.form else None
+    num_beams = int(request.form['num_beams']) if 'num_beams' in request.form else None
+    max_new_tokens = int(request.form['max_new_tokens']) if 'max_new_tokens' in request.form else None
     result = model_wrapper.predict_completion(query_parts, temperature, top_p, num_beams, max_new_tokens)
     return jsonify(result)
 
 
 @app.route('/predict_representation', methods=['POST'])
 def call_predict_representation_base():
-    data = request.get_json()
-    query_parts = data.get('query_parts')
+    # Initialize a list to store query parts
+    query_parts = [[] for _ in range(len(request.files))]
+    query_text = request.form['text']
+
+    # Iterate over the files in the request
+    for env_id, (key, file) in enumerate(request.files.items()):
+        # Deserialize the file into a tensor
+        tensor = _image_tensor_from_file(file)
+
+        # Unbind the tensor into individual images along the first dimension
+        unbound_images = tensor.unbind(dim=0)
+
+        # Add each unbound image to the query parts
+        for image in unbound_images:
+            query_parts[env_id].append(('image', image))
+        query_parts[env_id].append(('text', query_text))
+
+    # Assuming model_wrapper is already defined and loaded
     result = model_wrapper.predict_representation_base(query_parts)
-    return jsonify(result.tolist())
+    # Convert the result tensor to bytes
+    buffer = io.BytesIO()
+    torch.save(result, buffer)
+    buffer.seek(0)
+
+    # Send the serialized tensor as a file to the client
+    return send_file(buffer, as_attachment=True, download_name='result.pt', mimetype='application/octet-stream')
 
 
 @app.route('/predict_representation_after_completion', methods=['POST'])
 def call_predict_representation_after_completion():
-    data = request.get_json()
-    query_parts = data.get('query_parts')
-    temperature = data.get('temperature')
-    top_p = data.get('top_p')
-    num_beams = data.get('num_beams')
-    max_new_tokens = data.get('max_new_tokens')
+    query_parts = []
+    query_text = request.form['text'] if 'text' in request.form else None
+    query_parts.append(('text', query_text))
+    temperature = float(request.form['temperature']) if 'temperature' in request.form else None
+    top_p = float(request.form['top_p']) if 'top_p' in request.form else None
+    num_beams = int(request.form['num_beams']) if 'num_beams' in request.form else None
+    max_new_tokens = int(request.form['max_new_tokens']) if 'max_new_tokens' in request.form else None
     result = model_wrapper.predict_representation_after_completion(query_parts, temperature, top_p, num_beams, max_new_tokens)
     return jsonify(result.tolist())
 
