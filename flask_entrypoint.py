@@ -184,7 +184,7 @@ def call_predict_completion():
 def call_predict_representation_base():
     # Initialize a list to store query parts
     query_parts = [[] for _ in range(len(request.files))]
-    query_text = request.form['text']
+    query_text = request.form.getlist('text')
 
     # Iterate over the files in the request
     for env_id, (key, file) in enumerate(request.files.items()):
@@ -197,7 +197,7 @@ def call_predict_representation_base():
         # Add each unbound image to the query parts
         for image in unbound_images:
             query_parts[env_id].append(('image', image))
-        query_parts[env_id].append(('text', query_text))
+        query_parts[env_id].append(('text', query_text[env_id]))
 
     # Assuming model_wrapper is already defined and loaded
     result = model_wrapper.predict_representation_base(query_parts)
