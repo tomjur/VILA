@@ -1,3 +1,5 @@
+import datetime
+import os
 from dataclasses import dataclass
 
 import torch
@@ -199,8 +201,18 @@ def call_predict_representation_base():
             query_parts[env_id].append(('image', image))
         query_parts[env_id].append(('text', query_text[env_id]))
 
-    # Assuming model_wrapper is already defined and loaded
     result = model_wrapper.predict_representation_base(query_parts)
+
+    # Assuming model_wrapper is already defined and loaded
+    if torch.any(torch.isnan(result)):
+        # print error:
+        os.makedirs("errors", exist_ok=True)
+        print("Error: NaNs in the result tensor, query parts:", query_parts)
+        # save query parts to a local file, the name of the file is a formatted time string:
+        file_name = datetime.datetime.now().strftime("%Y-%m-%d_%H-%M-%S") + ".pt"
+        torch.save(query_parts, os.path.join('errors', file_name))
+
+
     # Convert the result tensor to bytes
     buffer = io.BytesIO()
     torch.save(result, buffer)
