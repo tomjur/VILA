@@ -32,7 +32,7 @@ fastapi==0.111.0
 fastapi-cli==0.0.4
 ffmpy==0.3.2
 filelock==3.15.4
-flash-attn @ file:///home/tomjur/VILA/flash_attn-2.4.2%2Bcu118torch2.0cxx11abiFALSE-cp310-cp310-linux_x86_64.whl#sha256=2c7ddc942e0715ef4a7ab62e3404b519a7ac040b3b6eae8fedcdc08a36ced786
+# flash-attn @ file:///home/tomjur/VILA/flash_attn-2.4.2%2Bcu118torch2.0cxx11abiFALSE-cp310-cp310-linux_x86_64.whl#sha256=2c7ddc942e0715ef4a7ab62e3404b519a7ac040b3b6eae8fedcdc08a36ced786
 Flask==3.0.3
 fonttools==4.53.0
 frozenlist==1.4.1
